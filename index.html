@@ -230,6 +230,9 @@ h3.sec button{text-transform:none;letter-spacing:0;color:var(--accent);font-size
 .pinpad button{aspect-ratio:1;max-height:76px;border-radius:50%;background:var(--surface);font-size:26px;display:grid;place-items:center;justify-self:center;width:76px}
 .pinpad button.blank{background:transparent}
 .pinpad button.fn{background:transparent;font-size:15px;color:var(--muted)}
+#cover{position:fixed;inset:0;z-index:150;background:var(--bg);display:grid;place-items:center}
+#cover[hidden]{display:none}
+#cover img{border-radius:18px}
 /* ---------- toast ---------- */
 #toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 150px);transform:translate(-50%,20px);background:var(--text);color:var(--bg);padding:11px 16px;border-radius:14px;font-size:14px;font-weight:550;opacity:0;pointer-events:none;transition:.22s;z-index:200;display:flex;gap:14px;align-items:center;max-width:90vw;box-shadow:0 8px 30px rgba(0,0,0,.3)}
 #toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
@@ -246,7 +249,8 @@ html[data-theme=light] #toast button{color:#5ee0c4}
 </div>
 <div id="sheets"></div>
 <div id="lock" hidden></div>
+<div id="cover" hidden><img src="icons/icon-192.png" alt="" width="72" height="72"></div>
 <div id="toast" role="status" aria-live="polite"></div>
-<script src="app.js?v=1.1.1"></script>
+<script src="app.js?v=1.2.0"></script>
 </body>
 </html>
