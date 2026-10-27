@@ -32,3 +32,4 @@ Tus datos no se tocan.
 - PIN de 4 o 6 dígitos con límite de intentos: tras 5 fallos, espera de 30 s que se duplica (máx. 15 min).
 - Restaurar valida cada registro y descarta lo que no tenga forma correcta.
 - Recomendado: activa 2FA en tu cuenta de GitHub, porque desde aquí se publica el código de la app.
+- (v1.1.1) El JavaScript vive en `app.js` y la CSP no permite scripts en línea (`script-src 'self'`, `script-src-attr 'none'`): aunque un texto se colara sin escapar, el navegador no ejecuta código inyectado.
