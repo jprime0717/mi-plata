@@ -25,3 +25,10 @@ se borran también sus datos: haz respaldo antes. Para pasarte a otro celular: r
 ## Actualizaciones
 Cuando cambiemos algo, se reemplaza el `index.html` en GitHub (y se sube la versión en `sw.js`).
 Tus datos no se tocan.
+
+## Seguridad (v1.1)
+- Sin servidor ni conexiones externas: una política CSP bloquea cualquier envío de datos fuera de la app.
+- Respaldos cifrados con AES-256-GCM (clave derivada con PBKDF2-SHA256, 310.000 iteraciones). El PIN y Face ID nunca van en el respaldo.
+- PIN de 4 o 6 dígitos con límite de intentos: tras 5 fallos, espera de 30 s que se duplica (máx. 15 min).
+- Restaurar valida cada registro y descarta lo que no tenga forma correcta.
+- Recomendado: activa 2FA en tu cuenta de GitHub, porque desde aquí se publica el código de la app.

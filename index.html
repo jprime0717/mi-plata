@@ -11,6 +11,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Mi Plata">
 <meta name="format-detection" content="telephone=no">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" type="image/png" href="icons/icon-192.png">
 <link rel="manifest" href="manifest.webmanifest">
@@ -250,7 +252,7 @@ html[data-theme=light] #toast button{color:#5ee0c4}
 /* =====================================================================
    Mi Plata — control de gastos personal (PWA, 100% local)
    ===================================================================== */
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -332,7 +334,7 @@ function defaultState() {
   const mk = (type) => ([n, ic, ci]) => ({ id: uid(), type, name: n, icon: ic, color: COLORS[ci], budget: 0, archived: false });
   return {
     v: 1,
-    settings: { currency: 'COP', weekStart: 1, monthStart: 1, theme: 'auto', period: 'month', rates: { USD: 4000, EUR: 4350 }, pinHash: null, pinSalt: null, bioId: null, defaultAccount: null, lastAccount: null, lastBackup: null, installHint: true },
+    settings: { currency: 'COP', weekStart: 1, monthStart: 1, theme: 'auto', period: 'month', rates: { USD: 4000, EUR: 4350 }, pinHash: null, pinSalt: null, bioId: null, defaultAccount: null, lastAccount: null, lastBackup: null, installHint: true, pinLen: 4, pinFails: 0, pinLockUntil: 0, backupSnooze: null },
     accounts: [
       { id: uid(), name: 'Efectivo', icon: '💵', color: COLORS[4], currency: 'COP', initial: 0, include: true, archived: false },
       { id: uid(), name: 'Banco', icon: '🏦', color: COLORS[6], currency: 'COP', initial: 0, include: true, archived: false },
@@ -525,6 +527,7 @@ function fieldHTML(f) {
   const lab = f.label ? `<label class="f-label">${esc(f.label)}</label>` : '';
   switch (f.type) {
     case 'text': return `<div class="field">${lab}<input name="${f.key}" value="${esc(f.value ?? '')}" placeholder="${esc(f.placeholder || '')}" autocomplete="off" maxlength="40"></div>`;
+    case 'password': return `<div class="field">${lab}<input type="password" name="${f.key}" autocomplete="new-password" autocapitalize="off" spellcheck="false" maxlength="128"></div>`;
     case 'money': return `<div class="field">${lab}<input name="${f.key}" inputmode="decimal" value="${f.value ? esc(numStr(f.value)) : ''}" placeholder="${esc(f.placeholder || '0')}" autocomplete="off"></div>`;
     case 'int': return `<div class="field">${lab}<input name="${f.key}" inputmode="numeric" pattern="[0-9]*" value="${esc(f.value ?? '')}" placeholder="${esc(f.placeholder || '')}"></div>`;
     case 'date': return `<div class="field">${lab}<input type="date" name="${f.key}" value="${esc(f.value || '')}"></div>`;
@@ -557,6 +560,7 @@ function formSheet(title, fields, opts = {}) {
         if (f.type === 'toggle') vals[f.key] = inp.checked;
         else if (f.type === 'money') vals[f.key] = parseNum(inp.value);
         else if (f.type === 'int') vals[f.key] = parseInt(inp.value, 10) || 0;
+        else if (f.type === 'password') vals[f.key] = inp.value;
         else vals[f.key] = inp.value.trim();
       }
       if (opts.validate) { const err = opts.validate(vals); if (err) return toast(err); }
@@ -674,7 +678,10 @@ function viewHome() {
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const install = S().installHint && isIOS && !standalone ? `<div class="banner"><span style="font-size:22px">📲</span><span><b>Instálala en tu iPhone</b>Toca Compartir y luego "Agregar a inicio".</span><button class="x" data-act="hide-install" aria-label="Cerrar">✕</button></div>` : '';
 
-  return `${install}
+  const lbk = S().lastBackup, lbDays = lbk ? daysBetween(lbk, todayStr()) : null;
+  const needBk = state.tx.length >= 10 && (lbDays === null || lbDays >= 7) && !(S().backupSnooze && S().backupSnooze > todayStr());
+  const bkBanner = needBk ? `<div class="banner"><span style="font-size:22px">💾</span><span><b>${lbDays === null ? 'Aún no tienes respaldo' : 'Tu último respaldo fue hace ' + lbDays + ' días'}</b>Tus datos solo están en este iPhone. <button data-act="backup" style="color:var(--accent);font-weight:600">Crear respaldo</button></span><button class="x" data-act="snooze-backup" aria-label="Recordar después">✕</button></div>` : '';
+  return `${install}${bkBanner}
   <div class="top">
     <button class="acct-btn" data-act="pick-acct">${a ? `<span style="font-size:20px">${a.icon}</span>` : `<span style="font-size:20px">👛</span>`}<span class="t"><small>${a ? esc(a.name) : 'Todas las cuentas'}</small><b class="num ${bal < 0 ? 'neg' : ''}">${money(bal, balCur)}</b></span><span class="chev">▾</span></button>
     <button class="icon-btn" data-act="search" aria-label="Buscar">${ICON.search}</button>
@@ -799,16 +806,16 @@ function viewMore() {
     ${row('rec-manager', '🔁', 'Pagos recurrentes', state.recurring.filter(r => r.active).length + ' activos')}
   </div></div>
   <div class="group"><div class="g-title">Seguridad</div><div class="card">
-    ${row('pin', '🔒', 'Bloqueo con PIN', st.pinHash ? 'Activado' : 'Desactivado')}
+    ${row('pin', '🔒', 'Bloqueo con PIN', st.pinHash ? `Activado · ${st.pinLen === 6 ? 6 : 4} dígitos` : 'Desactivado')}
     ${st.pinHash && bioOK ? row('bio', '🙂', 'Face ID / Touch ID', st.bioId ? 'Activado' : 'Desactivado') : ''}
   </div></div>
   <div class="group"><div class="g-title">Tus datos</div><div class="card">
-    ${row('backup', '💾', 'Crear respaldo', lbTxt, lb === null || lb > 30 ? '' : '')}
+    ${row('backup', '💾', 'Crear respaldo cifrado', lbTxt)}
     ${row('restore', '♻️', 'Restaurar respaldo')}
     ${row('csv', '📄', 'Exportar a Excel (CSV)')}
     ${row('wipe', '🗑️', 'Borrar todos los datos', undefined, 'danger')}
   </div>
-  <p class="hint" style="margin-top:8px">Todo se guarda solo en este iPhone. Haz un respaldo de vez en cuando y guárdalo en Archivos o iCloud.${lb === null || lb > 30 ? ' <b style="color:var(--warn)">Te recomendamos hacer uno ahora.</b>' : ''}</p></div>
+  <p class="hint" style="margin-top:8px">Todo se guarda solo en este iPhone. Haz un respaldo cifrado cada semana y guárdalo en Archivos o iCloud.${lb === null || lb > 7 ? ' <b style="color:var(--warn)">Te recomendamos hacer uno ahora.</b>' : ''}</p></div>
   <div class="group"><div class="g-title">Acerca de</div><div class="card">
     ${row('about', '🪙', 'Mi Plata', 'Versión ' + APP_VERSION)}
   </div></div>
@@ -873,11 +880,22 @@ function renderTx() {
   updAmt();
 }
 function evalExpr(e) {
+  // Calculadora sin eval(): números y + − × ÷ con precedencia normal.
   if (!e) return 0;
   e = e.replace(/[+\-*/.]+$/, '');
   if (!e) return 0;
-  if (!/^[\d.+\-*/]+$/.test(e)) return NaN;
-  try { const v = Function('"use strict";return (' + e + ')')(); return isFinite(v) ? v : NaN; } catch { return NaN; }
+  const toks = e.match(/\d+(?:\.\d*)?|[+\-*/]/g);
+  if (!toks || toks.join('') !== e || toks.length % 2 === 0) return NaN;
+  const stack = [parseFloat(toks[0])];
+  for (let i = 1; i < toks.length; i += 2) {
+    const op = toks[i], n = parseFloat(toks[i + 1]);
+    if (!/^[+\-*/]$/.test(op) || !isFinite(n)) return NaN;
+    if (op === '*') stack[stack.length - 1] *= n;
+    else if (op === '/') stack[stack.length - 1] /= n;
+    else stack.push(op === '-' ? -n : n);
+  }
+  const v = stack.reduce((x, y) => x + y, 0);
+  return isFinite(v) ? v : NaN;
 }
 function dispExpr(e) {
   return e.replace(/\d+(\.\d*)?/g, m => { const [i, d] = m.split('.'); return Number(i).toLocaleString('es-CO') + (d !== undefined ? ',' + d : ''); })
@@ -900,7 +918,7 @@ function pressKey(k) {
   else {
     const c = ({ '−': '-', '×': '*', '÷': '/', ',': '.' })[k] || k;
     const last = e.split(/[+\-*/]/).pop();
-    if (ops.includes(c)) { if (!e) return; if (ops.includes(e.slice(-1))) e = e.slice(0, -1); e += c; }
+    if (ops.includes(c)) { if (!e) return; e = e.replace(/\.$/, ''); if (ops.includes(e.slice(-1))) e = e.slice(0, -1); e += c; }
     else if (c === '.') { if (last.includes('.')) return; e += last === '' ? '0.' : '.'; }
     else {
       const dec = last.split('.')[1];
@@ -1185,65 +1203,100 @@ async function bioVerify() {
   await navigator.credentials.get({ publicKey: { challenge: crypto.getRandomValues(new Uint8Array(32)), allowCredentials: [{ type: 'public-key', id: unb64(S().bioId), transports: ['internal'] }], userVerification: 'required', timeout: 60000 } });
   return true;
 }
-function pinPadHTML(title, withBio) {
-  return `<div class="pin"><img class="logo" src="icons/icon-192.png" alt="" onerror="this.style.display='none'"><div class="pt" data-pt>${esc(title)}</div><div class="dots" data-dots><i></i><i></i><i></i><i></i></div>
+const pinLen = () => S().pinLen === 6 ? 6 : 4;
+function pinPadHTML(title, withBio, len) {
+  len = len || pinLen();
+  return `<div class="pin"><img class="logo" src="icons/icon-192.png" alt=""><div class="pt" data-pt>${esc(title)}</div><div class="dots" data-dots>${'<i></i>'.repeat(len)}</div>
   <div class="pinpad">${['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(n => `<button data-p="${n}">${n}</button>`).join('')}${withBio ? '<button class="fn" data-bio aria-label="Face ID">🙂<br>Face ID</button>' : '<button class="blank" disabled></button>'}<button data-p="0">0</button><button class="fn" data-p="del" aria-label="Borrar">⌫</button></div></div>`;
 }
-function attachPin(root, onFull) {
-  let code = '';
+function attachPin(root, onFull, len, blocked) {
+  len = len || pinLen();
+  let code = '', busy = false;
+  const logo = root.querySelector('.logo'); if (logo) logo.addEventListener('error', () => { logo.hidden = true; });
   const dots = () => $$('[data-dots] i', root).forEach((d, i) => d.classList.toggle('f', i < code.length));
   root.addEventListener('click', async e => {
-    const b = e.target.closest('[data-p]'); if (!b) return;
+    const b = e.target.closest('[data-p]'); if (!b || busy) return;
+    if (blocked && blocked()) return;
     if (b.dataset.p === 'del') code = code.slice(0, -1);
-    else if (code.length < 4) code += b.dataset.p;
+    else if (code.length < len) code += b.dataset.p;
     dots();
-    if (code.length === 4) {
+    if (code.length === len) {
+      busy = true;
       const c = code; const ok = await onFull(c);
-      if (ok === false) { const d = $('[data-dots]', root); d.classList.add('shake'); setTimeout(() => { d.classList.remove('shake'); code = ''; dots(); }, 380); }
-      else code = '';
+      if (ok === false) { const d = $('[data-dots]', root); d.classList.add('shake'); setTimeout(() => { d.classList.remove('shake'); code = ''; dots(); busy = false; }, 380); }
+      else { code = ''; busy = false; }
     }
   });
 }
-function pinPrompt(title) {
+function pinPrompt(title, len) {
   return new Promise(res => {
     let done = false;
-    const el = openSheet(pinPadHTML(title, false), { onClose: () => { if (!done) res(null); } });
-    attachPin(el, c => { done = true; closeSheet(el, true); res(c); return true; });
+    const el = openSheet(pinPadHTML(title, false, len), { onClose: () => { if (!done) res(null); } });
+    attachPin(el, c => { done = true; closeSheet(el, true); res(c); return true; }, len);
   });
 }
+// Límite de intentos: tras 5 fallos, espera de 30 s que se duplica en cada fallo (máx. 15 min).
+const PIN_FREE_TRIES = 5;
+const lockLeft = () => Math.max(0, Math.ceil(((+S().pinLockUntil || 0) - Date.now()) / 1000));
+function registerPinFail() {
+  S().pinFails = (+S().pinFails || 0) + 1;
+  if (S().pinFails >= PIN_FREE_TRIES) S().pinLockUntil = Date.now() + Math.min(900, 30 * 2 ** (S().pinFails - PIN_FREE_TRIES)) * 1000;
+  persist();
+}
+function clearPinFails() { if (S().pinFails || S().pinLockUntil) { S().pinFails = 0; S().pinLockUntil = 0; persist(); } }
+async function checkPin(c) {
+  if (lockLeft() > 0) return false;
+  if (await sha(S().pinSalt + c) === S().pinHash) { clearPinFails(); return true; }
+  registerPinFail(); return false;
+}
+let lockTick = null;
 function showLock() {
   if (!S().pinHash || locked) return;
   locked = true;
   const el = $('#lock');
   el.innerHTML = pinPadHTML('Ingresa tu PIN', !!(S().bioId && bioOK));
   el.hidden = false;
-  const unlock = () => { locked = false; el.hidden = true; el.innerHTML = ''; processRecurring() && render(); };
-  attachPin(el, async c => { if (await sha(S().pinSalt + c) === S().pinHash) { unlock(); return true; } return false; });
+  const pt = el.querySelector('[data-pt]');
+  const upd = () => {
+    const s = lockLeft();
+    if (s > 0) { const m = Math.floor(s / 60); pt.textContent = `Demasiados intentos. Espera ${m ? m + ' min ' : ''}${s % 60} s`; }
+    else if (S().pinFails > 0) { const r = PIN_FREE_TRIES - S().pinFails; pt.textContent = r > 0 ? `PIN incorrecto · ${r === 1 ? 'queda 1 intento' : 'quedan ' + r + ' intentos'}` : 'PIN incorrecto · otro error alarga la espera'; }
+    else pt.textContent = 'Ingresa tu PIN';
+  };
+  upd(); clearInterval(lockTick); lockTick = setInterval(upd, 1000);
+  const unlock = () => { clearInterval(lockTick); locked = false; el.hidden = true; el.innerHTML = ''; processRecurring() && render(); };
+  attachPin(el, async c => { const ok = await checkPin(c); upd(); if (ok) { unlock(); return true; } return false; }, pinLen(), () => lockLeft() > 0);
   const bb = el.querySelector('[data-bio]');
   if (bb) {
-    const tryBio = async () => { try { if (await bioVerify()) unlock(); } catch (e) { /* cancelado */ } };
+    const tryBio = async () => { try { if (await bioVerify()) { clearPinFails(); unlock(); } } catch (e) { /* cancelado */ } };
     bb.addEventListener('click', tryBio);
     setTimeout(tryBio, 350);
   }
 }
+async function newPin(title) {
+  const len = await choose(title, [{ label: 'PIN de 6 dígitos', sub: 'Recomendado', value: 6, icon: '🔐' }, { label: 'PIN de 4 dígitos', value: 4, icon: '🔒' }]);
+  if (!len) return null;
+  const p1 = await pinPrompt(`Crea tu PIN de ${len} dígitos`, len); if (!p1) return null;
+  if (/^(\d)\1+$/.test(p1) || '0123456789'.includes(p1) || '9876543210'.includes(p1)) { toast('Ese PIN es muy fácil de adivinar, elige otro'); return null; }
+  const p2 = await pinPrompt('Confírmalo', len); if (!p2) return null;
+  if (p1 !== p2) { toast('Los PIN no coinciden, intenta de nuevo'); return null; }
+  return { pin: p1, len };
+}
 async function managePin() {
   if (!S().pinHash) {
-    const p1 = await pinPrompt('Crea un PIN de 4 dígitos'); if (!p1) return;
-    const p2 = await pinPrompt('Confírmalo'); if (!p2) return;
-    if (p1 !== p2) return toast('Los PIN no coinciden, intenta de nuevo');
-    S().pinSalt = uid(); S().pinHash = await sha(S().pinSalt + p1); save(); render();
+    const n = await newPin('Activar bloqueo'); if (!n) return;
+    S().pinLen = n.len; S().pinSalt = uid(); S().pinHash = await sha(S().pinSalt + n.pin); clearPinFails(); save(); render();
     toast(bioOK ? 'PIN activado. También puedes activar Face ID' : 'PIN activado');
     return;
   }
   const v = await choose('Bloqueo con PIN', [{ label: 'Cambiar PIN', value: 'change', icon: '🔁' }, { label: 'Desactivar PIN', value: 'off', icon: '🔓', danger: true }]);
   if (!v) return;
+  if (lockLeft() > 0) return toast(`Demasiados intentos. Espera ${lockLeft()} s`);
   const cur = await pinPrompt('Ingresa tu PIN actual'); if (!cur) return;
-  if (await sha(S().pinSalt + cur) !== S().pinHash) return toast('PIN incorrecto');
-  if (v === 'off') { S().pinHash = null; S().pinSalt = null; S().bioId = null; save(); render(); return toast('PIN desactivado'); }
-  const p1 = await pinPrompt('Nuevo PIN'); if (!p1) return;
-  const p2 = await pinPrompt('Confírmalo'); if (!p2) return;
-  if (p1 !== p2) return toast('Los PIN no coinciden');
-  S().pinSalt = uid(); S().pinHash = await sha(S().pinSalt + p1); save(); render(); toast('PIN cambiado');
+  if (!(await checkPin(cur))) return toast(lockLeft() > 0 ? `PIN incorrecto. Espera ${lockLeft()} s` : 'PIN incorrecto');
+  if (v === 'off') { S().pinHash = null; S().pinSalt = null; S().bioId = null; S().pinLen = 4; save(); render(); return toast('PIN desactivado'); }
+  const n = await newPin('Nuevo PIN'); if (!n) return;
+  S().pinLen = n.len; S().pinSalt = uid(); S().pinHash = await sha(S().pinSalt + n.pin); save(); render(); toast('PIN cambiado');
 }
 async function manageBio() {
   if (S().bioId) { S().bioId = null; save(); render(); return toast('Face ID desactivado'); }
@@ -1252,22 +1305,154 @@ async function manageBio() {
 }
 
 /* ===================== Datos ===================== */
+// --- Cifrado de respaldos: PBKDF2-SHA256 (310.000 iteraciones) + AES-256-GCM ---
+const TE = new TextEncoder(), TD = new TextDecoder();
+const ENC_FORMAT = 'mi-plata-cifrado';
+function bytesToB64(u8) { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
+function b64ToBytes(b) { const s = atob(b); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; }
+async function deriveKey(pw, salt, iter) {
+  const base = await crypto.subtle.importKey('raw', TE.encode(pw), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+async function encryptJSON(obj, pw) {
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12)), iter = 310000;
+  const key = await deriveKey(pw, salt, iter);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, TE.encode(JSON.stringify(obj))));
+  return JSON.stringify({ format: ENC_FORMAT, v: 1, kdf: 'PBKDF2-SHA256', cipher: 'AES-256-GCM', iter, salt: bytesToB64(salt), iv: bytesToB64(iv), data: bytesToB64(ct), created: new Date().toISOString() });
+}
+async function decryptJSON(w, pw) {
+  if (!Number.isInteger(w.iter) || w.iter < 100000 || w.iter > 5e6 || typeof w.salt !== 'string' || typeof w.iv !== 'string' || typeof w.data !== 'string') throw new Error('formato');
+  const key = await deriveKey(pw, b64ToBytes(w.salt), w.iter);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64ToBytes(w.iv) }, key, b64ToBytes(w.data));
+  return JSON.parse(TD.decode(pt));
+}
+// Los datos de seguridad de este iPhone (PIN, Face ID) nunca van en el respaldo.
+const DEVICE_KEYS = ['pinHash', 'pinSalt', 'bioId', 'pinLen', 'pinFails', 'pinLockUntil', 'backupSnooze'];
+function backupData() {
+  const d = JSON.parse(JSON.stringify(state));
+  DEVICE_KEYS.forEach(k => delete d.settings[k]);
+  d.app = 'Mi Plata'; d.appVersion = APP_VERSION; d.exported = new Date().toISOString();
+  return d;
+}
 async function doBackup() {
-  const name = `mi-plata-respaldo-${todayStr()}.json`;
-  const ok = await shareFile(name, JSON.stringify(state, null, 1), 'application/json');
-  if (ok) { S().lastBackup = todayStr(); save(); render(); toast('Respaldo creado'); }
+  if (!crypto.subtle) return toast('Abre la app desde su ícono para crear respaldos');
+  const mode = await choose('Crear respaldo', [
+    { label: 'Cifrado con contraseña', sub: 'Recomendado: nadie puede leerlo sin la contraseña', icon: '🔐', value: 'enc' },
+    { label: 'Sin cifrar', sub: 'Cualquiera con el archivo puede leer tus datos', icon: '📄', value: 'plain' }]);
+  if (!mode) return;
+  let content;
+  if (mode === 'enc') {
+    const v = await formSheet('Contraseña del respaldo', [
+      { type: 'hint', text: 'Guárdala en un lugar seguro, por ejemplo en tu gestor de contraseñas. Sin ella el respaldo no se puede abrir.' },
+      { key: 'p1', type: 'password', label: 'Contraseña (mínimo 8 caracteres)' },
+      { key: 'p2', type: 'password', label: 'Repítela' }],
+      { ok: 'Cifrar respaldo', validate: x => x.p1.length < 8 ? 'Usa al menos 8 caracteres' : x.p1 !== x.p2 ? 'Las contraseñas no coinciden' : null });
+    if (!v) return;
+    toast('Cifrando respaldo…');
+    try { content = await encryptJSON(backupData(), v.p1); } catch (e) { return toast('No se pudo cifrar el respaldo'); }
+  } else content = JSON.stringify(backupData(), null, 1);
+  const name = `mi-plata-respaldo-${todayStr()}${mode === 'enc' ? '-cifrado' : ''}.json`;
+  // Hoja con botón propio: iOS exige un toque directo para abrir "Compartir / Guardar en Archivos".
+  const el = openSheet(`<div class="sh-title">Respaldo listo</div><p class="hint" style="text-align:center;margin:0 8px 14px">${mode === 'enc' ? '🔐 Cifrado con AES-256' : '📄 Sin cifrar'} · ${state.tx.length} movimientos<br>Toca el botón y elige <b>Guardar en Archivos</b> (iCloud Drive).</p><button class="btn primary block" data-save>💾 Guardar respaldo</button><button class="btn ghost block" data-x>Cancelar</button>`);
+  el.addEventListener('click', async e => {
+    if (e.target.closest('[data-x]')) return closeSheet(el);
+    if (!e.target.closest('[data-save]')) return;
+    const ok = await shareFile(name, content, 'application/json');
+    if (ok) { closeSheet(el, true); S().lastBackup = todayStr(); S().backupSnooze = null; save(); render(); toast('Respaldo guardado'); }
+  });
+}
+
+// --- Validación estricta de respaldos: solo entra lo que tiene forma correcta ---
+function sanitizeImport(d) {
+  if (!d || typeof d !== 'object' || !Array.isArray(d.tx) || !Array.isArray(d.accounts) || !Array.isArray(d.categories)) throw new Error('formato');
+  let dropped = 0;
+  const str = (v, max) => typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, max) : '';
+  const isId = v => typeof v === 'string' && /^[a-z0-9_-]{3,40}$/i.test(v);
+  const isDate = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && ymd(parseYmd(v)) === v;
+  const isNum = (v, min, max) => typeof v === 'number' && isFinite(v) && v >= min && v <= max;
+  const color = v => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : COLORS[12];
+  const icon = (v, def) => str(v, 16).replace(/[<>&"'`\\=]/g, '').trim() || def;
+  const isCur = v => typeof v === 'string' && /^[A-Z]{3}$/.test(v);
+  const MAXV = 1e13, seen = new Set();
+  const uniq = id => { if (seen.has(id)) return false; seen.add(id); return true; };
+  const accounts = [];
+  for (const a of d.accounts) {
+    if (!a || !isId(a.id) || !isCur(a.currency) || !isNum(+(a.initial ?? 0), -MAXV, MAXV) || !uniq(a.id)) { dropped++; continue; }
+    accounts.push({ id: a.id, name: str(a.name, 40) || 'Cuenta', icon: icon(a.icon, '💳'), color: color(a.color), currency: a.currency, initial: round2(+(a.initial ?? 0)), include: a.include !== false, archived: a.archived === true });
+  }
+  if (!accounts.length) throw new Error('sin cuentas');
+  const aIds = new Set(accounts.map(a => a.id));
+  const categories = [];
+  for (const c of d.categories) {
+    if (!c || !isId(c.id) || !['expense', 'income'].includes(c.type) || !uniq(c.id)) { dropped++; continue; }
+    categories.push({ id: c.id, type: c.type, name: str(c.name, 40) || 'Categoría', icon: icon(c.icon, '📦'), color: color(c.color), budget: isNum(c.budget, 0, MAXV) ? round2(c.budget) : 0, archived: c.archived === true });
+  }
+  const cType = new Map(categories.map(c => [c.id, c.type]));
+  const okMove = (t) => {
+    if (!['expense', 'income', 'transfer'].includes(t.type) || !isNum(t.amount, 0.005, MAXV) || !aIds.has(t.accountId)) return false;
+    if (t.type === 'transfer') return aIds.has(t.toAccountId) && t.toAccountId !== t.accountId && (t.toAmount === undefined || t.toAmount === null || isNum(t.toAmount, 0.005, MAXV));
+    return cType.get(t.categoryId) === t.type;
+  };
+  const recurring = [];
+  for (const r of Array.isArray(d.recurring) ? d.recurring : []) {
+    if (!r || !isId(r.id) || !FREQ[r.freq] || !isDate(r.start) || !Number.isInteger(r.n) || r.n < 0 || r.n > 100000 || !r.tpl || !okMove(r.tpl) || !(r.end == null || isDate(r.end)) || !uniq(r.id)) { dropped++; continue; }
+    const t = r.tpl, tpl = { type: t.type, amount: round2(t.amount), accountId: t.accountId, note: str(t.note, 120) };
+    if (t.type === 'transfer') { tpl.toAccountId = t.toAccountId; tpl.toAmount = round2(t.toAmount ?? t.amount); } else tpl.categoryId = t.categoryId;
+    recurring.push({ id: r.id, freq: r.freq, start: r.start, n: r.n, active: r.active !== false, end: r.end || null, tpl });
+  }
+  const rIds = new Set(recurring.map(r => r.id));
+  const tx = [];
+  for (const t of d.tx) {
+    if (!t || !isId(t.id) || !isDate(t.date) || !okMove(t) || !uniq(t.id)) { dropped++; continue; }
+    const o = { id: t.id, type: t.type, amount: round2(t.amount), accountId: t.accountId, date: t.date, note: str(t.note, 120), created: isNum(t.created, 0, 1e14) ? t.created : Date.now() };
+    if (t.type === 'transfer') { o.toAccountId = t.toAccountId; o.toAmount = round2(t.toAmount ?? t.amount); } else o.categoryId = t.categoryId;
+    if (rIds.has(t.recId)) o.recId = t.recId;
+    tx.push(o);
+  }
+  const goals = [];
+  for (const g of Array.isArray(d.goals) ? d.goals : []) {
+    if (!g || !isId(g.id) || !isNum(g.target, 0.01, MAXV) || !isNum(+(g.saved ?? 0), 0, MAXV) || !uniq(g.id)) { dropped++; continue; }
+    goals.push({ id: g.id, name: str(g.name, 40) || 'Meta', icon: icon(g.icon, '🎯'), color: color(g.color), target: round2(g.target), saved: round2(+(g.saved ?? 0)), deadline: isDate(g.deadline) ? g.deadline : null,
+      log: (Array.isArray(g.log) ? g.log : []).filter(l => l && isDate(l.d) && isNum(l.a, -MAXV, MAXV)).map(l => ({ d: l.d, a: round2(l.a) })).slice(-500) });
+  }
+  const s = d.settings && typeof d.settings === 'object' ? d.settings : {};
+  const rates = {};
+  if (s.rates && typeof s.rates === 'object') for (const [k, v] of Object.entries(s.rates)) if (isCur(k) && isNum(v, 1e-9, 1e9)) rates[k] = v;
+  const settings = {
+    currency: isCur(s.currency) ? s.currency : 'COP',
+    weekStart: s.weekStart === 0 ? 0 : 1,
+    monthStart: Number.isInteger(s.monthStart) && s.monthStart >= 1 && s.monthStart <= 28 ? s.monthStart : 1,
+    theme: ['auto', 'dark', 'light'].includes(s.theme) ? s.theme : 'auto',
+    period: ['day', 'week', 'month', 'year', 'all'].includes(s.period) ? s.period : 'month',
+    rates, defaultAccount: aIds.has(s.defaultAccount) ? s.defaultAccount : null, lastAccount: aIds.has(s.lastAccount) ? s.lastAccount : null,
+    lastBackup: isDate(s.lastBackup) ? s.lastBackup : null, installHint: s.installHint === true,
+  };
+  const budget = { amount: d.budget && isNum(d.budget.amount, 0, MAXV) ? round2(d.budget.amount) : 0 };
+  return { data: { v: 1, settings, accounts, categories, tx, recurring, goals, budget }, dropped };
 }
 function doRestore() {
   const inp = $('#restoreFile'); if (!inp) return;
   inp.value = '';
   inp.onchange = async () => {
     const f = inp.files[0]; if (!f) return;
-    try {
-      const d = JSON.parse(await f.text());
-      if (!d || !Array.isArray(d.tx) || !Array.isArray(d.accounts)) throw new Error('formato');
-      if (!(await confirmDlg(`Reemplazar tus datos actuales por el respaldo (${d.tx.length} movimientos)?`, 'Restaurar'))) return;
-      state = migrate(d); ui.acct = 'all'; processRecurring(); await persist(); render(); toast('Respaldo restaurado');
-    } catch (e) { toast('Ese archivo no es un respaldo válido'); }
+    if (f.size > 25 * 1024 * 1024) return toast('El archivo es demasiado grande para ser un respaldo');
+    let d;
+    try { d = JSON.parse(await f.text()); } catch (e) { return toast('Ese archivo no es un respaldo de Mi Plata'); }
+    if (d && d.format === ENC_FORMAT) {
+      if (!crypto.subtle) return toast('Abre la app desde su ícono para restaurar respaldos cifrados');
+      const v = await formSheet('Respaldo cifrado', [{ key: 'p', type: 'password', label: 'Contraseña del respaldo' }], { ok: 'Abrir', validate: x => !x.p ? 'Escribe la contraseña' : null });
+      if (!v) return;
+      toast('Descifrando…');
+      try { d = await decryptJSON(d, v.p); } catch (e) { return toast('Contraseña incorrecta o archivo dañado'); }
+    }
+    let res;
+    try { res = sanitizeImport(d); } catch (e) { return toast('Ese archivo no es un respaldo válido de Mi Plata'); }
+    const { data, dropped } = res;
+    const msg = `¿Reemplazar tus datos actuales por este respaldo? Trae ${data.tx.length} movimientos y ${data.accounts.length} cuentas${dropped ? ` (se descartan ${dropped} registros dañados)` : ''}.`;
+    if (!(await confirmDlg(msg, 'Restaurar'))) return;
+    const keep = {}; DEVICE_KEYS.forEach(k => { keep[k] = S()[k]; });
+    state = migrate(data); Object.assign(state.settings, keep);
+    ui.acct = 'all'; ui.off = 0; processRecurring(); await persist(); render(); toast('Respaldo restaurado');
   };
   inp.click();
 }
@@ -1301,6 +1486,7 @@ const actions = {
   prev: () => { ui.off--; render(); },
   next: () => { ui.off++; render(); },
   search: () => openSearch(),
+  'snooze-backup': () => { S().backupSnooze = ymd(addDays(new Date(), 3)); save(); render(); toast('Te lo recordamos en 3 días'); },
   'hide-install': () => { S().installHint = false; save(); render(); },
   'pick-period': async () => {
     const v = await choose('Ver por', [...['day', 'week', 'month', 'year', 'all'].map(k => ({ label: PERIOD_NAMES[k], value: k, sel: ui.period === k })), { label: 'Rango de fechas…', value: 'custom', sel: ui.period === 'custom' }, { label: 'Volver a hoy', value: 'today', icon: '↩️' }]);
@@ -1378,7 +1564,7 @@ const actions = {
   restore: () => doRestore(),
   csv: () => doCSV(),
   wipe: () => doWipe(),
-  about: () => choose('Mi Plata ' + APP_VERSION, [{ label: `${state.tx.length} movimientos · ${state.accounts.length} cuentas`, value: null, icon: '📊' }, { label: 'Tus datos nunca salen de este iPhone', value: null, icon: '🔒' }]),
+  about: () => choose('Mi Plata ' + APP_VERSION, [{ label: `${state.tx.length} movimientos · ${state.accounts.length} cuentas`, value: null, icon: '📊' }, { label: 'Tus datos nunca salen de este iPhone', value: null, icon: '🔒' }, { label: 'Sin conexiones externas (CSP activa)', value: null, icon: '🛡️' }, { label: 'Respaldos cifrados con AES-256', value: null, icon: '🔐' }]),
 };
 $('#app').addEventListener('click', e => {
   const el = e.target.closest('[data-act]'); if (!el || el.disabled) return;

@@ -1,5 +1,5 @@
 // Mi Plata — service worker: permite usar la app sin internet.
-const CACHE = 'miplata-v1.0.0';
+const CACHE = 'miplata-v1.1.0';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', e => {
